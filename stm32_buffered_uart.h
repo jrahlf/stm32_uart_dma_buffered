@@ -8,8 +8,11 @@
 
 #include <stdbool.h>
 #include <string.h>
-#include <stdatomic.h>
 #include "main.h"		// pull in ST definitions like UART_HandleTypeDef
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
 /// ==== configuration options ====
@@ -79,36 +82,12 @@ struct BufferedUart {
 #endif
 
 
-void BlockRingbuffer_Init(struct BlockRingbuffer * buffer, void * underlying, unsigned int length);
 
-static inline bool BlockRingbuffer_IsValid(const struct BlockRingbuffer * buffer)
-{
-	return buffer != NULL && buffer->buf != NULL && buffer->length > 0;
-}
-
-static inline unsigned int BlockRingbuffer_GetReadAvailable(const struct BlockRingbuffer * buffer)
-{
-	atomic_signal_fence(memory_order_acquire);
-	return buffer->head - buffer->tail;
-}
-
-static inline unsigned int BlockRingbuffer_GetWriteAvailable(const struct BlockRingbuffer * buffer)
-{
-	return buffer->length - BlockRingbuffer_GetReadAvailable(buffer);
-}
-
-static inline unsigned int BlockRingbuffer_GetLength(const struct BlockRingbuffer * buffer)
-{
-#ifdef BUFFERED_UART_FIXED_BUFFER_SIZE
-	return BUFFERED_UART_FIXED_BUFFER_SIZE;
-#endif
-	return buffer->length;
-}
 
 
 HAL_StatusTypeDef BufferedUart_StartReception(struct BufferedUart *uart);
 HAL_StatusTypeDef BufferedUart_StopReception(struct BufferedUart *uart);
-HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * buffered_uart, UART_HandleTypeDef * uart, enum BufferedUartMode mode);
+HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * buffered_uart, UART_HandleTypeDef * uart, enum BufferedUartMode mode, void *txBuffer, unsigned int txSize, void *rxBuffer, unsigned int rxSize);
 HAL_StatusTypeDef BufferedUart_Transmit(struct BufferedUart *uart, const void * data, unsigned int length);
 HAL_StatusTypeDef BufferedUart_TransmitTimed(struct BufferedUart *uart, const void * data, unsigned int length, unsigned int timeoutMs);
 unsigned int BufferedUart_Dequeue(struct BufferedUart *uart, void * buffer, unsigned int maximumLength);
@@ -150,5 +129,9 @@ static inline HAL_StatusTypeDef BufferedUart_TransmitStringTimed(struct Buffered
 	return BufferedUart_TransmitTimed(uart, string, strlen(string), timeoutMs);
 }
 
+
+#ifdef __cplusplus
+}
+#endif
 
 

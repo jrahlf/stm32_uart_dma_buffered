@@ -68,7 +68,31 @@ void BlockRingbuffer_Init(struct BlockRingbuffer * buffer, void * underlying, un
 	buffer->tail = 0;
 }
 
-HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * bufferedUart, UART_HandleTypeDef * uart, enum BufferedUartMode mode)
+static bool BlockRingbuffer_IsValid(const struct BlockRingbuffer * buffer)
+{
+	return buffer != NULL && buffer->buf != NULL && buffer->length > 0 && buffer->length <= 0xFFFF;
+}
+
+static inline unsigned int BlockRingbuffer_GetReadAvailable(const struct BlockRingbuffer * buffer)
+{
+	atomic_signal_fence(memory_order_acquire);
+	return buffer->head - buffer->tail;
+}
+
+static inline unsigned int BlockRingbuffer_GetWriteAvailable(const struct BlockRingbuffer * buffer)
+{
+	return buffer->length - BlockRingbuffer_GetReadAvailable(buffer);
+}
+
+static inline unsigned int BlockRingbuffer_GetLength(const struct BlockRingbuffer * buffer)
+{
+#ifdef BUFFERED_UART_FIXED_BUFFER_SIZE
+	return BUFFERED_UART_FIXED_BUFFER_SIZE;
+#endif
+	return buffer->length;
+}
+
+HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * bufferedUart, UART_HandleTypeDef * uart, enum BufferedUartMode mode, void *txBuffer, unsigned int txSize, void *rxBuffer, unsigned int rxSize)
 {
 	if (s_numberUartsInUse == MAX_NUMBER_BUFFERED_UARTS) {
 		return HAL_ERROR;
@@ -79,6 +103,9 @@ HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * bufferedUart, UART_Han
 	}
 
 	if (mode == BUFFERED_UART_TX || mode == BUFFERED_UART_TX_RX) {
+		struct BlockRingbuffer buffer;
+		BlockRingbuffer_Init(&buffer, txBuffer, txSize);
+		bufferedUart->txqueue = buffer;
 		if (!BlockRingbuffer_IsValid(&bufferedUart->txqueue)) {
 			return HAL_ERROR;
 		}
@@ -93,6 +120,9 @@ HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * bufferedUart, UART_Han
 	}
 
 	if (mode == BUFFERED_UART_RX || mode == BUFFERED_UART_TX_RX) {
+		struct BlockRingbuffer buffer;
+		BlockRingbuffer_Init(&buffer, rxBuffer, rxSize);
+		bufferedUart->rxqueue = buffer;
 		if (!BlockRingbuffer_IsValid(&bufferedUart->rxqueue)) {
 			return HAL_ERROR;
 		}
