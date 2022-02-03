@@ -1,9 +1,32 @@
-/*
- *
- *  Created on: Dec 12, 2021
- *  Author: Jonas Rahlf
- */
+/**
 
+stm32_buffered_uart
+provides functionality to receive and send data via UART and DMA by the use of ringbuffers
+
+
+MIT License
+
+Copyright (c) 2022 Jonas Rahlf
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
 
 #include "stm32_buffered_uart.h"
 #include <stdint.h>
@@ -31,6 +54,14 @@
 	#endif
 #endif
 
+#ifdef BUFFERED_UART_PROVIDE_HAL_UART_ErrorCallback
+	#ifdef USE_HAL_UART_REGISTER_CALLBACKS
+		#if(USE_HAL_UART_REGISTER_CALLBACKS == 0)
+			#define BufferedUart_UART_ErrorCallback HAL_UART_ErrorCallback
+		#endif
+	#endif
+#endif
+
 
 static struct BufferedUart * s_uarts[MAX_NUMBER_BUFFERED_UARTS];
 static int s_numberUartsInUse;
@@ -40,6 +71,7 @@ static bool BufferedUart_TXQueue_Enqueue(struct BufferedUart * uart, const void 
 static const void* BufferedUart_TXQueue_Dequeue(const struct BufferedUart * uart, unsigned int * length);
 void BufferedUart_TxCpltCallback(UART_HandleTypeDef *huart);
 void BufferedUart_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
+void BufferedUart_UART_ErrorCallback(UART_HandleTypeDef *huart);
 static struct BufferedUart * ContainerOf(const UART_HandleTypeDef * huart);
 
 static inline unsigned int min(unsigned int a, unsigned int b) {
@@ -49,9 +81,9 @@ static inline unsigned int min(unsigned int a, unsigned int b) {
     return a;
 }
 
-static inline void disableHalfCompleteInterrupt(UART_HandleTypeDef *huart)
+static inline void disableHalfCompleteInterrupt(DMA_HandleTypeDef *dmaHandle)
 {
-	__HAL_DMA_DISABLE_IT(huart->hdmatx, DMA_IT_HT);
+	__HAL_DMA_DISABLE_IT(dmaHandle, DMA_IT_HT);
 }
 
 static void registerBufferedUart(struct BufferedUart * uart)
@@ -136,6 +168,13 @@ HAL_StatusTypeDef BufferedUart_Init(struct BufferedUart * bufferedUart, UART_Han
 
 	}
 
+#if (USE_HAL_UART_REGISTER_CALLBACKS == 1)
+	HAL_StatusTypeDef status = HAL_UART_RegisterCallback(uart, HAL_UART_ERROR_CB_ID, BufferedUart_UART_ErrorCallback);
+	if (status != HAL_OK) {
+		return status;
+	}
+#endif
+
 	registerBufferedUart(bufferedUart);
 	bufferedUart->uart = uart;
 	bufferedUart->lastSendBlockSize = 0;
@@ -199,6 +238,16 @@ void BufferedUart_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 	bufferedUart->rxqueue.head = Size;
 	atomic_signal_fence(memory_order_release);
 
+	if (Size < bufferedUart->rxqueue.tail) {
+		// this seems like a bug in ST HAL driver, where
+		// HAL_UARTEx_RxEventCallback(huart, (huart->RxXferSize - huart->RxXferCount)); is called and
+		// RxXferCount > RxXferSize
+		// this can happen in conjunction with restarts of DMA reception due to UART errors
+		// e.g. other device sends with wrong baud rate
+		// current strategy is to ignore this data, usually it fixes itself (e.g. other device sends at correct baud rate)
+		return;
+	}
+
 	enum DataHandledResult handled = BUFFERED_UART_DATA_NOT_HANDLED;
 	if (bufferedUart->DataReceivedHandler != NULL) {
 		unsigned int length = BlockRingbuffer_GetReadAvailable(&bufferedUart->rxqueue);
@@ -218,6 +267,21 @@ void BufferedUart_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 		atomic_signal_fence(memory_order_acquire);
 		bufferedUart->rxqueue.tail = 0;
 		atomic_signal_fence(memory_order_release);
+	}
+}
+
+/// the current strategy is to just restart the reception on error
+/// transmission will start automatically the next time something is enqueued
+void BufferedUart_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+	struct BufferedUart * bufferedUart = ContainerOf(huart);
+	if (bufferedUart == NULL) {
+		return;
+	}
+
+	HAL_StatusTypeDef result = BufferedUart_StartReception(bufferedUart);
+	if (result != HAL_OK) {
+		Error_Handler();
 	}
 }
 
@@ -349,7 +413,7 @@ void BufferedUart_TryStartTransmission(struct BufferedUart *uart)
 	if (length > 0) {
 		uart->lastSendBlockSize = length;
 		HAL_StatusTypeDef result = HAL_UART_Transmit_DMA(uart->uart, (uint8_t*)data, length);
-		disableHalfCompleteInterrupt(uart->uart);	// small optimization, disable unused interrupt
+		disableHalfCompleteInterrupt(uart->uart->hdmatx);	// small optimization, disable unused interrupt
 		if (result != HAL_OK) {
 			Error_Handler();
 		}

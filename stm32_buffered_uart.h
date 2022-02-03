@@ -1,8 +1,32 @@
-/*
- *
- *  Created on: Dec 2, 2021
- *  Author: Jonas Rahlf
- */
+/**
+
+stm32_buffered_uart
+provides functionality to receive and send data via UART and DMA by the use of ringbuffers
+
+
+MIT License
+
+Copyright (c) 2022 Jonas Rahlf
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
 
 #pragma once
 
@@ -30,6 +54,11 @@ extern "C" {
 // otherwise, if USE_HAL_UART_REGISTER_CALLBACKS==0 you have to call BufferedUart_RxEventCallback from external glue code
 // default on
 #define BUFFERED_UART_PROVIDE_HAL_UARTEx_RxEventCallback
+
+// define BUFFERED_UART_PROVIDE_HAL_UART_ErrorCallback if the API should provide the definition for the function
+// otherwise, if USE_HAL_UART_REGISTER_CALLBACKS==0 you have to call BufferedUart_UART_ErrorCallback from external glue code
+// default on
+#define BUFFERED_UART_PROVIDE_HAL_UART_ErrorCallback
 
 // set MAX_NUMBER_BUFFERED_UARTS to the number of required number of buffered uarts
 // default 1
@@ -100,6 +129,11 @@ unsigned int BufferedUart_Dequeue(struct BufferedUart *uart, void * buffer, unsi
 #ifndef BUFFERED_UART_PROVIDE_HAL_UARTEx_RxEventCallback
 	/// this function must be called if USE_HAL_UART_REGISTER_CALLBACKS==0
 	void BufferedUart_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
+#endif
+
+#ifndef BUFFERED_UART_PROVIDE_HAL_UART_ErrorCallback
+	/// this function must be called if USE_HAL_UART_REGISTER_CALLBACKS==0
+	void BufferedUart_UART_ErrorCallback(UART_HandleTypeDef *huart);
 #endif
 
 /**
