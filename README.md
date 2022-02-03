@@ -9,5 +9,8 @@ The (maximum) number of uarts to be used must be set via `MAX_NUMBER_BUFFERED_UA
 It is based on the ST HAL and requires that the UART peripheral and the DMA channels are configured beforehand.
 See [doc/dma_rx.png](doc/dma_rx.png) and [doc/dma_tx.png](doc/dma_tx.png). This can be done entirely via STM32CubeIDE in the IOC editor.
 
+### Reentrancy
+The driver is not reentrant safe by default (usually this means do not use it inside interrupts). However, one can `#define BUFFERED_UART_REENTRANT` which causes interrupts to be disabled when enqueuing data and then the driver can be used in a reentrant way.
+
 ### Optimizations
 The driver disables the transfer half complete interrupt, as it not necessary. However, the HAL automatically enables it every time, so this driver disables it every time a transfer is started. This shall reduce interrupt workload.
