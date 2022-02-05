@@ -279,9 +279,11 @@ void BufferedUart_UART_ErrorCallback(UART_HandleTypeDef *huart)
 		return;
 	}
 
-	HAL_StatusTypeDef result = BufferedUart_StartReception(bufferedUart);
-	if (result != HAL_OK) {
-		Error_Handler();
+	if (BlockRingbuffer_IsValid(&bufferedUart->rxqueue)) {
+		HAL_StatusTypeDef result = BufferedUart_StartReception(bufferedUart);
+		if (result != HAL_OK) {
+			Error_Handler();
+		}
 	}
 }
 
