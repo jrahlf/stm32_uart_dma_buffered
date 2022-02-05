@@ -14,3 +14,26 @@ The driver is not reentrant safe by default (usually this means do not use it in
 
 ### Optimizations
 The driver disables the transfer half complete interrupt, as it not necessary. However, the HAL automatically enables it every time, so this driver disables it every time a transfer is started. This shall reduce interrupt workload.
+
+### Error Handling
+If a UART error occurs, the ST HAL aborts the DMA transmission. The driver then automatically restarts the reception. This can happen for example if the other device sends at a different baud rate.
+
+### Example
+
+```c
+extern UART_HandleTypeDef huart2; //! must be configured beforehand, e.g. via STM32CubeIDE and corresponding init functions
+
+enum DataHandledResult DataReceivedHandler(const char * data, unsigned int length)
+{
+  // copy incoming data into another processing buffer, note this is called from interrupt context!
+  return BUFFERED_UART_DATA_HANDLED;
+}
+
+static char txbuffer[110];
+static char rxbuffer[30];
+struct BlockRingbuffer ringbuffer;
+buffered_uart.DataReceivedHandler = DataReceivedHandler;
+BufferedUart_Init(&buffered_uart, &huart2, BUFFERED_UART_TX_RX, txbuffer, sizeof(txbuffer), rxbuffer, sizeof(rxbuffer));
+BufferedUart_StartReception(&buffered_uart);
+BufferedUart_TransmitString(&buffered_uart, "hello world\n");
+```
