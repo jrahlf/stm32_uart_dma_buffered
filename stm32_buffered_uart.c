@@ -92,12 +92,20 @@ static void registerBufferedUart(struct BufferedUart * uart)
 	s_numberUartsInUse++;
 }
 
-void BlockRingbuffer_Init(struct BlockRingbuffer * buffer, void * underlying, unsigned int length)
+static void BlockRingbuffer_Init(struct BlockRingbuffer * buffer, void * underlying, unsigned int length)
 {
 	buffer->buf = underlying;
 	buffer->length = length;
 	buffer->head = 0;
 	buffer->tail = 0;
+}
+
+static void BlockRingbuffer_Reset(struct BlockRingbuffer * buffer)
+{
+	atomic_signal_fence(memory_order_acquire);
+	buffer->head = 0;
+	buffer->tail = 0;
+	atomic_signal_fence(memory_order_release);
 }
 
 static bool BlockRingbuffer_IsValid(const struct BlockRingbuffer * buffer)
@@ -188,12 +196,15 @@ HAL_StatusTypeDef BufferedUart_StartReception(struct BufferedUart *uart)
 		return HAL_ERROR;
 	}
 
+	BlockRingbuffer_Reset(&uart->rxqueue);
+
 	return HAL_UARTEx_ReceiveToIdle_DMA(uart->uart, (uint8_t*)uart->rxqueue.buf, uart->rxqueue.length);
 }
 
 HAL_StatusTypeDef BufferedUart_StopReception(struct BufferedUart *uart)
 {
-	return HAL_UART_DMAStop(uart->uart);
+	HAL_UART_AbortReceive_IT(uart->uart);
+	return HAL_DMA_Abort(uart->uart->hdmarx);
 }
 
 struct BufferedUart * ContainerOf(const UART_HandleTypeDef * huart)
@@ -238,16 +249,6 @@ void BufferedUart_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 	bufferedUart->rxqueue.head = Size;
 	atomic_signal_fence(memory_order_release);
 
-	if (Size < bufferedUart->rxqueue.tail) {
-		// this seems like a bug in ST HAL driver, where
-		// HAL_UARTEx_RxEventCallback(huart, (huart->RxXferSize - huart->RxXferCount)); is called and
-		// RxXferCount > RxXferSize
-		// this can happen in conjunction with restarts of DMA reception due to UART errors
-		// e.g. other device sends with wrong baud rate
-		// current strategy is to ignore this data, usually it fixes itself (e.g. other device sends at correct baud rate)
-		return;
-	}
-
 	enum DataHandledResult handled = BUFFERED_UART_DATA_NOT_HANDLED;
 	if (bufferedUart->DataReceivedHandler != NULL) {
 		unsigned int length = BlockRingbuffer_GetReadAvailable(&bufferedUart->rxqueue);
@@ -279,11 +280,10 @@ void BufferedUart_UART_ErrorCallback(UART_HandleTypeDef *huart)
 		return;
 	}
 
-	if (BlockRingbuffer_IsValid(&bufferedUart->rxqueue)) {
-		HAL_StatusTypeDef result = BufferedUart_StartReception(bufferedUart);
-		if (result != HAL_OK) {
-			Error_Handler();
-		}
+	BufferedUart_StopReception(bufferedUart);
+	HAL_StatusTypeDef result = BufferedUart_StartReception(bufferedUart);
+	if (result != HAL_OK) {
+		Error_Handler();
 	}
 }
 
